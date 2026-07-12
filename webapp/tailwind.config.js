@@ -1,0 +1,19 @@
+/** @type {import('tailwindcss').Config} */
+export default {
+  content: [
+    "./index.html",
+    "./src/**/*.{js,ts,jsx,tsx}",
+  ],
+  theme: {
+    extend: {
+      colors: {
+        emberz: {
+          dark: '#121212',
+          cyan: '#00FFCC',
+          pink: '#FF0055'
+        }
+      }
+    },
+  },
+  plugins: [],
+}

@@ -1,7 +1,13 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { api } from '../api';
-import { ArrowLeft, Download, Ticket, Users, CheckCircle, Loader2, RefreshCw, Server, Edit2, Save, X, Search, Copy, Check, XCircle, FolderOpen } from 'lucide-react';
+import { QrReader } from 'react-qr-reader';
+import { 
+  ArrowLeft, Download, Ticket, Users, CheckCircle, 
+  Loader2, RefreshCw, Server, Edit2, Save, X, 
+  Search, Copy, Check, XCircle, FolderOpen, 
+  Camera, Scan 
+} from 'lucide-react';
 
 interface EventStats {
   id: string;
@@ -45,9 +51,15 @@ export default function EventDetailsScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
+  // Scanner States
+  const [isScannerOpen, setIsScannerOpen] = useState(false);
+  const [scanStatus, setScanStatus] = useState<{ type: 'idle' | 'success' | 'warning' | 'error', message: string }>({ type: 'idle', message: '' });
+  
   // Use a ref to prevent auto-refresh from overwriting while admin is typing a name
   const isEditingRef = useRef(false);
   isEditingRef.current = editingTokenId !== null;
+
+  const processingScanRef = useRef(false);
 
   const fetchData = async (isManualRefresh = false) => {
     if (isManualRefresh) setRefreshing(true);
@@ -60,7 +72,8 @@ export default function EventDetailsScreen() {
       
       // Only update tokens if the admin isn't actively editing a row
       if (!isEditingRef.current) {
-        setTokens(tokensRes.data);
+        // DEFENSIVE FIX: Guarantee this is an array before setting it in state
+        setTokens(Array.isArray(tokensRes.data) ? tokensRes.data : []);
       }
     } catch (error) {
       console.error("Failed to fetch event data", error);
@@ -83,8 +96,10 @@ export default function EventDetailsScreen() {
 
   // Extract unique batch names (Defensively checking both casing types)
   const uniqueBatches = useMemo(() => {
+    // DEFENSIVE FIX: Double check tokens is an array before map
+    const safeTokens = Array.isArray(tokens) ? tokens : [];
     const batches = new Set(
-      tokens
+      safeTokens
         .map(t => t.batchName || t.BatchName)
         .filter(Boolean) as string[]
     );
@@ -129,7 +144,7 @@ export default function EventDetailsScreen() {
       link.href = url;
       
       const fileNameSuffix = selectedDownloadBatch !== 'ALL' ? `_${selectedDownloadBatch}` : '_Complete';
-      link.setAttribute('download', `${event?.name.replace(/\s+/g, '_')}${fileNameSuffix}_Cards.zip`);
+      link.setAttribute('download', `${event?.name?.replace(/\s+/g, '_')}${fileNameSuffix}_Cards.zip`);
       
       document.body.appendChild(link);
       link.click();
@@ -147,7 +162,8 @@ export default function EventDetailsScreen() {
     setSavingName(true);
     try {
       await api.put(`/events/${id}/tokens/${tokenId}`, { guestName: editNameValue });
-      setTokens(tokens.map(t => t.tokenId === tokenId ? { ...t, guestName: editNameValue } : t));
+      const safeTokens = Array.isArray(tokens) ? tokens : [];
+      setTokens(safeTokens.map(t => t.tokenId === tokenId ? { ...t, guestName: editNameValue } : t));
       setEditingTokenId(null);
     } catch (error) {
       console.error("Failed to update name", error);
@@ -163,7 +179,47 @@ export default function EventDetailsScreen() {
     setTimeout(() => setCopiedId(null), 2000);
   };
 
-  const filteredTokens = tokens.filter(token => {
+  const handleScanResult = async (result: any, error: any) => {
+    if (result?.text && !processingScanRef.current) {
+      processingScanRef.current = true;
+      const scannedTokenId = result.text;
+      
+      setScanStatus({ type: 'idle', message: `Processing Code: ${scannedTokenId}...` });
+
+      try {
+        const payload = [{
+          tokenId: scannedTokenId,
+          scannedAt: new Date().toISOString()
+        }];
+
+        // Hitting your existing C# sync endpoint
+        const response = await api.post(`/events/${id}/sync`, payload);
+        const data = response.data;
+
+        if (data.successfullyCheckedIn === 1 || data.SuccessfullyCheckedIn === 1) {
+          setScanStatus({ type: 'success', message: `ACCESS GRANTED: ${scannedTokenId} Checked In.` });
+          await fetchData(false); 
+        } else if (data.alreadyCheckedIn === 1 || data.AlreadyCheckedIn === 1) {
+          setScanStatus({ type: 'warning', message: `WARNING: Code ${scannedTokenId} was already used.` });
+        } else {
+          setScanStatus({ type: 'error', message: `DENIED: Code ${scannedTokenId} is invalid for this event.` });
+        }
+      } catch (err) {
+        console.error("Check-in failed", err);
+        setScanStatus({ type: 'error', message: 'Network Error during validation.' });
+      } finally {
+        // Cooldown before next scan is allowed
+        setTimeout(() => {
+          processingScanRef.current = false;
+          setScanStatus(prev => prev.message.includes(scannedTokenId) ? { type: 'idle', message: '' } : prev);
+        }, 3000);
+      }
+    }
+  };
+
+  // DEFENSIVE FIX: Ensure tokens is array before filter
+  const safeTokensList = Array.isArray(tokens) ? tokens : [];
+  const filteredTokens = safeTokensList.filter(token => {
     const query = searchQuery.toLowerCase();
     const folderName = token.batchName || token.BatchName || '';
     
@@ -270,7 +326,7 @@ export default function EventDetailsScreen() {
       </div>
 
       {/* Control Panels */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-12">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-12">
         {/* Generate Panel */}
         <div className="relative bg-gradient-to-br from-white/[0.03] to-white/[0.01] border border-white/10 rounded-3xl p-8 backdrop-blur-2xl shadow-2xl overflow-hidden group">
           <h3 className="text-xl font-bold text-white mb-2 tracking-tight">Initialize Tokens</h3>
@@ -333,6 +389,26 @@ export default function EventDetailsScreen() {
             </button>
           </div>
         </div>
+
+        {/* Live Scanner Panel */}
+        <div className="relative bg-gradient-to-br from-white/[0.03] to-white/[0.01] border border-emberz-pink/20 rounded-3xl p-8 backdrop-blur-2xl shadow-[0_0_30px_rgba(255,0,85,0.05)] overflow-hidden group flex flex-col justify-between">
+          <div>
+            <div className="flex items-center gap-3 mb-2">
+              <Camera className="text-emberz-pink" size={24} />
+              <h3 className="text-xl font-bold text-white tracking-tight">Live Web Scanner</h3>
+            </div>
+            <p className="text-gray-400 text-sm mb-6 leading-relaxed">Turn this device into a secure check-in node. Scan Gigat Cards using your camera.</p>
+          </div>
+          <div className="flex flex-col justify-end">
+            <button
+              onClick={() => setIsScannerOpen(true)}
+              className="w-full flex items-center justify-center gap-3 bg-emberz-pink text-white font-bold py-4 px-8 rounded-2xl hover:bg-rose-500 transition-all shadow-[0_0_20px_rgba(255,0,85,0.2)] hover:shadow-[0_0_40px_rgba(255,0,85,0.5)]"
+            >
+              <Scan size={20} />
+              Launch Scanner
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* Guest Registry / Token Management */}
@@ -341,7 +417,7 @@ export default function EventDetailsScreen() {
         <div className="p-8 border-b border-white/5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-6 shrink-0 bg-white/[0.01]">
           <div>
             <h3 className="text-2xl font-bold text-white tracking-tight">Guest Registry</h3>
-            <p className="text-gray-400 text-sm mt-1">Manage network assignments for {tokens.length} generated tokens.</p>
+            <p className="text-gray-400 text-sm mt-1">Manage network assignments for {safeTokensList.length} generated tokens.</p>
           </div>
           
           <div className="relative w-full sm:w-80 group">
@@ -379,7 +455,7 @@ export default function EventDetailsScreen() {
               </tr>
             </thead>
             <tbody className="divide-y divide-white/[0.02]">
-              {tokens.length === 0 ? (
+              {safeTokensList.length === 0 ? (
                 <tr>
                   <td colSpan={5} className="px-8 py-20 text-center text-gray-500">
                     <div className="flex flex-col items-center justify-center opacity-40">
@@ -496,6 +572,65 @@ export default function EventDetailsScreen() {
           </table>
         </div>
       </div>
+
+      {isScannerOpen && (
+        <div className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-black/95 backdrop-blur-md animate-in fade-in duration-300">
+          <div className="absolute top-8 right-8 z-[110]">
+            <button 
+              onClick={() => {
+                setIsScannerOpen(false);
+                setScanStatus({ type: 'idle', message: '' });
+              }}
+              className="p-4 bg-white/5 hover:bg-white/10 rounded-full text-white transition-all border border-white/10"
+            >
+              <X size={24} />
+            </button>
+          </div>
+
+          <div className="w-full max-w-md px-4 flex flex-col items-center">
+            <div className="mb-8 text-center">
+              <h2 className="text-3xl font-bold text-white tracking-widest uppercase flex items-center justify-center gap-3">
+                <Scan className="text-emberz-pink" size={32} /> Secure Scan
+              </h2>
+              <p className="text-gray-400 text-sm mt-2 uppercase tracking-[0.2em]">Align QR code within the frame</p>
+            </div>
+
+            <div className="w-full aspect-square rounded-3xl overflow-hidden border-2 border-emberz-pink/50 shadow-[0_0_50px_rgba(255,0,85,0.2)] relative bg-black">
+              <QrReader
+                onResult={handleScanResult}
+                constraints={{ facingMode: 'environment' }}
+                containerStyle={{ width: '100%', height: '100%' }}
+                videoStyle={{ objectFit: 'cover' }}
+              />
+              <div className="absolute inset-0 pointer-events-none border-[40px] border-black/40" />
+              <div className="absolute top-1/2 left-0 w-full h-0.5 bg-emberz-pink/80 shadow-[0_0_10px_#FF0055] animate-[scan_2s_ease-in-out_infinite] pointer-events-none" />
+            </div>
+
+            <div className={`mt-8 w-full p-6 rounded-2xl border transition-all duration-300 text-center min-h-[100px] flex items-center justify-center
+              ${scanStatus.type === 'idle' ? 'bg-white/5 border-white/10 text-gray-400' : ''}
+              ${scanStatus.type === 'success' ? 'bg-emerald-500/10 border-emerald-500/50 text-emerald-400 shadow-[0_0_30px_rgba(16,185,129,0.2)]' : ''}
+              ${scanStatus.type === 'warning' ? 'bg-yellow-500/10 border-yellow-500/50 text-yellow-400 shadow-[0_0_30px_rgba(234,179,8,0.2)]' : ''}
+              ${scanStatus.type === 'error' ? 'bg-emberz-pink/10 border-emberz-pink/50 text-emberz-pink shadow-[0_0_30px_rgba(255,0,85,0.2)]' : ''}
+            `}>
+              {scanStatus.type === 'idle' && !scanStatus.message ? (
+                <span className="uppercase tracking-[0.2em] text-xs font-bold animate-pulse">Waiting for Card Data...</span>
+              ) : (
+                <span className="font-mono font-bold text-lg">{scanStatus.message}</span>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Animation for the Scanner Line */}
+      <style>{`
+        @keyframes scan {
+          0% { transform: translateY(-100px); opacity: 0; }
+          10% { opacity: 1; }
+          90% { opacity: 1; }
+          100% { transform: translateY(100px); opacity: 0; }
+        }
+      `}</style>
     </div>
   );
 }

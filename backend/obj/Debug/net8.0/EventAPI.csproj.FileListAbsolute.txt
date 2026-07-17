@@ -112,3 +112,4 @@ C:\Users\user222\OneDrive\Desktop\emberz-event-system\backend\bin\Debug\net8.0\S
 C:\Users\user222\OneDrive\Desktop\emberz-event-system\backend\bin\Debug\net8.0\runtimes\win\lib\net6.0\Microsoft.Win32.SystemEvents.dll
 C:\Users\user222\OneDrive\Desktop\emberz-event-system\backend\bin\Debug\net8.0\runtimes\unix\lib\net6.0\System.Drawing.Common.dll
 C:\Users\user222\OneDrive\Desktop\emberz-event-system\backend\bin\Debug\net8.0\runtimes\win\lib\net6.0\System.Drawing.Common.dll
+C:\Users\user222\OneDrive\Desktop\emberz-event-system\backend\obj\Debug\net8.0\EventAPI.sourcelink.json
